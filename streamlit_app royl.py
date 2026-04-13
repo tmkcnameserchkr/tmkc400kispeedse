@@ -566,7 +566,9 @@ def send_messages(config, automation_state, user_id, process_id='AUTO-1'):
                         value = cookie_trimmed[first_equal_index + 1:].strip()
                         try:
                             driver.add_cookie({
-                                'name': name,
-                                'value': value,
-                                'domain': '.facebook.com',
+    'name': name,
+    'value': value,
+    'domain': '.facebook.com',
+    'path': '/'
+})
          
