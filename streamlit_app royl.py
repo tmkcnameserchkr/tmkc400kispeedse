@@ -566,9 +566,265 @@ def send_messages(config, automation_state, user_id, process_id='AUTO-1'):
                         value = cookie_trimmed[first_equal_index + 1:].strip()
                         try:
                             driver.add_cookie({
-    'name': name,
-    'value': value,
-    'domain': '.facebook.com',
-    'path': '/'
-})
-         
+                                'name': name,
+                                'value': value,
+                                'domain': '.facebook.com'
+                            })
+                        except Exception as e:
+                            log_message(f'{process_id}: Could not add cookie {name}: {e}', automation_state)
+        else:
+            log_message(f'{process_id}: No cookies provided, continuing without them...', automation_state)
+      
+        driver.refresh()
+        time.sleep(6)
+        
+        # Navigate to target profile
+        target_url = config.get('profile_link', 'https://www.facebook.com/')
+        log_message(f'{process_id}: Navigating to target: {target_url}', automation_state)
+        driver.get(target_url)
+        time.sleep(8)
+        
+        # Find message input
+        message_input = find_message_input(driver, process_id, automation_state)
+        
+        if not message_input:
+            log_message(f'{process_id}: Could not find message input field!', automation_state)
+            return False
+        
+        # Send messages in a loop
+        messages = config.get('messages', ['Hello!'])
+        delay = config.get('delay', 5)
+        message_limit = config.get('message_limit', 10)
+        
+        for i in range(min(message_limit, len(messages) * 10)):
+            if not automation_state.running:
+                log_message(f'{process_id}: Automation stopped by user', automation_state)
+                break
+                
+            message = get_next_message(messages, automation_state)
+            log_message(f'{process_id}: Sending message {i+1}: {message[:50]}...', automation_state)
+            
+            try:
+                # Clear and send message
+                message_input.clear()
+                time.sleep(1)
+                message_input.send_keys(message)
+                time.sleep(1)
+                
+                # Try to find and click send button
+                send_buttons = driver.find_elements(By.CSS_SELECTOR, 'div[aria-label*="Press Enter to send"], button[type="submit"], [data-testid="react-composer-send-button"]')
+                if send_buttons:
+                    send_buttons[0].click()
+                else:
+                    # Press Enter as fallback
+                    message_input.send_keys("\n")
+                
+                automation_state.message_count += 1
+                log_message(f'{process_id}: Message {i+1} sent successfully!', automation_state)
+                
+                # Wait before next message
+                time.sleep(delay)
+                
+            except Exception as e:
+                log_message(f'{process_id}: Error sending message: {e}', automation_state)
+                break
+        
+        log_message(f'{process_id}: Automation completed! Total messages sent: {automation_state.message_count}', automation_state)
+        return True
+        
+    except Exception as e:
+        log_message(f'{process_id}: Error in automation: {e}', automation_state)
+        return False
+    finally:
+        if driver:
+            driver.quit()
+
+# Main App UI
+st.markdown("""
+<div class="main-header">
+    <h1>👑 E2E BY SMART DEVIL KING 👑</h1>
+    <p>Royal Automation System</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Login Section
+if not st.session_state.logged_in:
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("### 🔐 Royal Authentication")
+        username = st.text_input("👤 Username", placeholder="Enter your royal username")
+        password = st.text_input("🔑 Password", type="password", placeholder="Enter your password")
+        login_btn = st.button("👑 Enter the Kingdom", use_container_width=True)
+        
+        if login_btn:
+            if username and password:
+                user_key = generate_user_key(username, password)
+                st.session_state.user_key = user_key
+                st.session_state.username = username
+                
+                if check_approval(user_key):
+                    st.session_state.logged_in = True
+                    st.session_state.key_approved = True
+                    st.success("👑 Welcome to the Kingdom! Access granted!")
+                    st.rerun()
+                else:
+                    st.session_state.approval_status = 'pending'
+                    st.warning("⚠️ Your key is pending approval! Please request approval from the admin.")
+            else:
+                st.error("Please enter both username and password!")
+
+# Admin Panel in Sidebar
+with st.sidebar:
+    st.markdown("## 👑 Royal Admin Panel")
+    admin_password = st.text_input("Admin Access Key", type="password", placeholder="Enter master key")
+    
+    if admin_password == ADMIN_PASSWORD:
+        st.success("✅ Admin Access Granted!")
+        
+        # View pending approvals
+        pending = load_pending_approvals()
+        approved = load_approved_keys()
+        
+        st.markdown("### 📋 Pending Approvals")
+        if pending:
+            for user, data in pending.items():
+                st.markdown(f"**User:** {data.get('username', 'Unknown')}")
+                st.markdown(f"**Key:** `{user}`")
+                if st.button(f"✅ Approve {user}", key=f"approve_{user}"):
+                    approved[user] = data
+                    save_approved_keys(approved)
+                    if user in pending:
+                        del pending[user]
+                        save_pending_approvals(pending)
+                    st.success(f"Approved key for {data.get('username', 'user')}!")
+                    st.rerun()
+                st.markdown("---")
+        else:
+            st.info("No pending approvals")
+        
+        st.markdown("### ✅ Approved Users")
+        if approved:
+            for key, data in approved.items():
+                st.markdown(f"• {data.get('username', 'Unknown')}: `{key}`")
+        else:
+            st.info("No approved users yet")
+
+# Main App after login
+if st.session_state.logged_in:
+    # Request approval if not approved
+    if not st.session_state.key_approved and st.session_state.approval_status == 'pending':
+        st.warning("⚠️ Your access key is pending approval!")
+        
+        if st.button("📱 Request Approval via WhatsApp", use_container_width=True):
+            whatsapp_url = send_whatsapp_message(st.session_state.username, st.session_state.user_key)
+            
+            # Save to pending approvals
+            pending = load_pending_approvals()
+            pending[st.session_state.user_key] = {
+                'username': st.session_state.username,
+                'timestamp': time.time()
+            }
+            save_pending_approvals(pending)
+            
+            st.session_state.whatsapp_opened = True
+            
+            # Open WhatsApp in new tab
+            components.html(f"""
+            <script>
+                window.open('{whatsapp_url}', '_blank');
+            </script>
+            """, height=0)
+            
+            st.success("WhatsApp opened! Send the message to the admin for approval.")
+            st.info("After admin approval, refresh the page to access the automation features.")
+    
+    # Show main automation interface if approved
+    elif st.session_state.key_approved:
+        st.success(f"👑 Welcome {st.session_state.username}! You have full access to the royal automation system.")
+        
+        # Automation Configuration
+        with st.expander("⚙️ Automation Configuration", expanded=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                profile_link = st.text_input("🔗 Facebook Profile Link", placeholder="https://www.facebook.com/username")
+                cookies = st.text_area("🍪 Facebook Cookies", placeholder="c_user=123456; xs=789abc;...", help="Paste your Facebook cookies here")
+            
+            with col2:
+                message_input_area = st.text_area("💬 Messages (one per line)", placeholder="Hello!\nHow are you?\nNice to meet you!", height=150)
+                delay = st.number_input("⏱️ Delay between messages (seconds)", min_value=1, max_value=60, value=5)
+                message_limit = st.number_input("📨 Maximum messages to send", min_value=1, max_value=100, value=10)
+        
+        # Messages list
+        messages = [msg.strip() for msg in message_input_area.split('\n') if msg.strip()]
+        
+        # Start/Stop Automation
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if not st.session_state.automation_running:
+                if st.button("🚀 Start Automation", use_container_width=True):
+                    if profile_link and cookies and messages:
+                        config = {
+                            'profile_link': profile_link,
+                            'cookies': cookies,
+                            'messages': messages,
+                            'delay': delay,
+                            'message_limit': message_limit
+                        }
+                        
+                        st.session_state.automation_state.running = True
+                        st.session_state.automation_state.logs = []
+                        st.session_state.automation_state.message_count = 0
+                        st.session_state.automation_state.message_rotation_index = 0
+                        st.session_state.automation_running = True
+                        
+                        # Run automation in background thread
+                        def run_automation():
+                            send_messages(config, st.session_state.automation_state, st.session_state.user_id)
+                            st.session_state.automation_state.running = False
+                            st.session_state.automation_running = False
+                        
+                        thread = threading.Thread(target=run_automation)
+                        thread.daemon = True
+                        thread.start()
+                        
+                        st.rerun()
+                    else:
+                        st.error("Please fill in all required fields!")
+            else:
+                if st.button("🛑 Stop Automation", use_container_width=True):
+                    st.session_state.automation_state.running = False
+                    st.session_state.automation_running = False
+                    st.rerun()
+        
+        with col2:
+            if st.button("🗑️ Clear Logs", use_container_width=True):
+                st.session_state.automation_state.logs = []
+                st.rerun()
+        
+        with col3:
+            st.metric("📊 Messages Sent", st.session_state.automation_state.message_count)
+        
+        # Console Output
+        st.markdown("### 📟 Royal Console Output")
+        console_container = st.container()
+        
+        with console_container:
+            st.markdown('<div class="console-output">', unsafe_allow_html=True)
+            if st.session_state.automation_state.logs:
+                for log in st.session_state.automation_state.logs[-50:]:  # Show last 50 logs
+                    st.markdown(f'<div class="console-line">{log}</div>', unsafe_allow_html=True)
+            else:
+                st.info("No logs yet. Start automation to see output...")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Auto-refresh for logs
+        if st.session_state.automation_running:
+            time.sleep(1)
+            st.rerun()
+    
+    # Footer
+    st.markdown("""
+    <div class="footer" style="text-align: center; margin-top: 50px;">
+        <p>👑 Powered by SMART DEVIL KING | Royal Automation System 👑</p>
+    </div>
+    """, unsafe_allow_html=True)
